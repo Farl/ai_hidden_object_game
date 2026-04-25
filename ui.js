@@ -33,14 +33,37 @@ export function reset() {
  * @param {string} dataUrl - The image data URL.
  * @param {Function} onLoadCallback - Function to call after the image is loaded.
  */
-export function showImage(dataUrl, onLoadCallback) {
-    elements.imagePreview.src = dataUrl;
+/**
+ * Shows the game image and executes callbacks after load or error.
+ * @param {string} dataUrl - The image URL or data URL.
+ * @param {Function} onLoadCallback - Called after successful load.
+ * @param {Function} [onErrorCallback] - Called if the image fails to load.
+ */
+export function showImage(dataUrl, onLoadCallback, onErrorCallback) {
+    const img = elements.imagePreview;
+
+    const cleanup = () => {
+        img.onload = null;
+        img.onerror = null;
+    };
+
+    img.onload = () => { cleanup(); onLoadCallback(); };
+    img.onerror = () => {
+        cleanup();
+        if (onErrorCallback) onErrorCallback();
+    };
+
+    img.src = dataUrl;
     elements.imageContainer.style.display = 'block';
 
-    if (elements.imagePreview.complete) {
+    // Image might already be cached and complete before handlers attach
+    if (img.complete && img.naturalWidth > 0) {
+        cleanup();
         onLoadCallback();
-    } else {
-        elements.imagePreview.onload = onLoadCallback;
+    } else if (img.complete && img.naturalWidth === 0 && dataUrl) {
+        // complete but broken (e.g. cached 404)
+        cleanup();
+        if (onErrorCallback) onErrorCallback();
     }
 }
 
@@ -60,12 +83,18 @@ export function showLoadingState(message) {
  * Updates the UI to show an error message.
  * @param {string} message - The error message to display.
  */
-export function showError(message) {
-    elements.gameStatusContainer.innerHTML = `<p style="color: red;">${message}</p>`;
+/**
+ * Shows an error message and restores the UI to an operable state.
+ * @param {string} message - The error message.
+ * @param {boolean} [hasValidImage=false] - Whether a valid image is still loaded.
+ */
+export function showError(message, hasValidImage = false) {
+    elements.gameStatusContainer.innerHTML = `<p style="color: #d9534f;">${message}</p>`;
     setButtonState(elements.fileInput, null, false);
     setButtonState(elements.generateImageButton, 'Generate Image', false);
-    setButtonState(elements.startGameButton, 'Start New Game', !!elements.imagePreview.src);
+    setButtonState(elements.startGameButton, 'Start New Game', !hasValidImage);
     elements.giveUpButton.style.display = 'none';
+    elements.giveUpButton.disabled = true;
 }
 
 /**

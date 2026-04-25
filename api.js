@@ -1,5 +1,8 @@
 // api.js - Handles interactions with the AI services through provider adapters.
 
+// Timeout for all AI API requests (60 s)
+const API_TIMEOUT_MS = 60_000;
+
 const DEFAULT_CONFIG = {
     AI_PROVIDER: 'pollinations',
     IMAGE_PROVIDER: 'pollinations',
@@ -85,12 +88,22 @@ async function parseErrorResponse(response) {
 }
 
 async function postJson(url, options) {
-    const response = await fetch(url, options);
-    if (!response.ok) {
-        throw new Error(await parseErrorResponse(response));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+    try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!response.ok) {
+            throw new Error(await parseErrorResponse(response));
+        }
+        return await response.json();
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            throw new Error('Request timed out after 60 s. Check your connection and try again.');
+        }
+        throw err;
     }
-
-    return await response.json();
 }
 
 function extractTextContent(messageContent) {
@@ -277,5 +290,81 @@ export function getAnalysisConfigurationError() {
             return '';
         default:
             return `Unsupported analysis provider: ${provider}`;
+
+    // ---------------------------------------------------------------------------
+    // Model discovery
+    // ---------------------------------------------------------------------------
+
+    /** Known image generation models (fallback — the API only returns a subset). */
+    const FALLBACK_IMAGE_MODELS = [
+        { value: 'flux',          label: 'Flux' },
+        { value: 'flux-realism',  label: 'Flux Realism' },
+        { value: 'flux-anime',    label: 'Flux Anime' },
+        { value: 'flux-3d',       label: 'Flux 3D' },
+        { value: 'turbo',         label: 'Turbo (fast)' },
+        { value: 'sana',          label: 'Sana' },
+    ];
+
+    /** Known vision-capable analysis models (fallback). */
+    const FALLBACK_ANALYSIS_MODELS = [
+        { value: 'openai',        label: 'OpenAI GPT-4o' },
+        { value: 'openai-large',  label: 'OpenAI GPT-4o Large' },
+        { value: 'gemini',        label: 'Gemini' },
+        { value: 'gemini-fast',   label: 'Gemini Flash' },
+        { value: 'gemini-large',  label: 'Gemini Large' },
+        { value: 'claude',        label: 'Claude' },
+        { value: 'claude-large',  label: 'Claude Large' },
+        { value: 'qwen-vision',   label: 'Qwen Vision' },
+    ];
+
+    /**
+     * Fetches image generation models from Pollinations.
+     * Falls back to a hardcoded list if the endpoint is unavailable or incomplete.
+     * @returns {Promise<Array<{value: string, label: string}>>}
+     */
+    export async function fetchImageModels() {
+        try {
+            const res = await fetch('https://image.pollinations.ai/models');
+            if (!res.ok) return FALLBACK_IMAGE_MODELS;
+            const names = await res.json();
+            if (!Array.isArray(names) || names.length < 2) return FALLBACK_IMAGE_MODELS;
+            // Merge API list with fallback so known labels are preserved
+            const fromApi = names.map(n => {
+                const known = FALLBACK_IMAGE_MODELS.find(m => m.value === n);
+                return known || { value: n, label: n };
+            });
+            // Prepend fallback entries not in API list so flagship models are always shown
+            FALLBACK_IMAGE_MODELS.forEach(fb => {
+                if (!fromApi.find(m => m.value === fb.value)) fromApi.unshift(fb);
+            });
+            return fromApi;
+        } catch {
+            return FALLBACK_IMAGE_MODELS;
+        }
+    }
+
+    /**
+     * Fetches vision-capable text models from Pollinations.
+     * Filters to only models that accept image input.
+     * Falls back to a hardcoded list if the endpoint is unavailable.
+     * @returns {Promise<Array<{value: string, label: string}>>}
+     */
+    export async function fetchAnalysisModels() {
+        try {
+            const res = await fetch('https://gen.pollinations.ai/text/models');
+            if (!res.ok) return FALLBACK_ANALYSIS_MODELS;
+            const models = await res.json();
+            const visionModels = models
+                .filter(m => Array.isArray(m.input_modalities) && m.input_modalities.includes('image'))
+                .map(m => {
+                    const known = FALLBACK_ANALYSIS_MODELS.find(fb => fb.value === m.name);
+                    const label = known?.label || m.description || m.name;
+                    return { value: m.name, label };
+                });
+            return visionModels.length > 0 ? visionModels : FALLBACK_ANALYSIS_MODELS;
+        } catch {
+            return FALLBACK_ANALYSIS_MODELS;
+        }
+    }
     }
 }

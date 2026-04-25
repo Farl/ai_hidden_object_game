@@ -4,28 +4,6 @@ import * as canvas from './canvas.js';
 import * as game from './game.js';
 import * as ui from './ui.js';
 
-// Image generation models available on image.pollinations.ai
-const IMAGE_MODELS = [
-    { value: 'flux',           label: 'Flux (default)' },
-    { value: 'flux-realism',   label: 'Flux Realism' },
-    { value: 'flux-anime',     label: 'Flux Anime' },
-    { value: 'flux-3d',        label: 'Flux 3D' },
-    { value: 'turbo',          label: 'Turbo (fast)' },
-    { value: 'sana',           label: 'Sana' },
-];
-
-// Vision-capable analysis models available on gen.pollinations.ai
-const ANALYSIS_MODELS = [
-    { value: 'openai',         label: 'OpenAI GPT-4o' },
-    { value: 'openai-large',   label: 'OpenAI GPT-4o Large' },
-    { value: 'gemini',         label: 'Gemini' },
-    { value: 'gemini-fast',    label: 'Gemini Flash' },
-    { value: 'gemini-large',   label: 'Gemini Large' },
-    { value: 'claude',         label: 'Claude' },
-    { value: 'claude-large',   label: 'Claude Large' },
-    { value: 'qwen-vision',    label: 'Qwen Vision' },
-];
-
 document.addEventListener('DOMContentLoaded', () => {
     // --- DOM Element Selection ---
     const fileInput = document.getElementById('fileInput');
@@ -56,13 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
         gameStatusContainer
     });
 
-    // Populate model dropdowns
-    const defaultImageModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_IMAGE_MODEL || 'flux';
-    const defaultAnalysisModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_TEXT_MODEL || 'openai';
-    ui.populateModelSelect(imageModelSelect, IMAGE_MODELS, defaultImageModel);
-    ui.populateModelSelect(analysisModelSelect, ANALYSIS_MODELS, defaultAnalysisModel);
-
-    // Sync model selections into runtime config
+    // Sync model selections into runtime config whenever they change
     function applyModelSelections() {
         window.AI_HIDDEN_OBJECT_CONFIG = {
             ...(window.AI_HIDDEN_OBJECT_CONFIG || {}),
@@ -70,9 +42,23 @@ document.addEventListener('DOMContentLoaded', () => {
             POLLINATIONS_TEXT_MODEL: analysisModelSelect.value,
         };
     }
-    applyModelSelections();
     imageModelSelect.addEventListener('change', applyModelSelections);
     analysisModelSelect.addEventListener('change', applyModelSelections);
+
+    // Show placeholder while models load, then fetch live lists from the API
+    const defaultImageModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_IMAGE_MODEL || 'flux';
+    const defaultAnalysisModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_TEXT_MODEL || 'openai';
+    ui.populateModelSelect(imageModelSelect, [{ value: defaultImageModel, label: 'Loading...' }], defaultImageModel);
+    ui.populateModelSelect(analysisModelSelect, [{ value: defaultAnalysisModel, label: 'Loading...' }], defaultAnalysisModel);
+    applyModelSelections();
+
+    Promise.all([api.fetchImageModels(), api.fetchAnalysisModels()])
+        .then(([imgModels, analysisModels]) => {
+            ui.populateModelSelect(imageModelSelect, imgModels, defaultImageModel);
+            ui.populateModelSelect(analysisModelSelect, analysisModels, defaultAnalysisModel);
+            applyModelSelections();
+        })
+        .catch(() => { /* keep placeholder selection on fetch failure */ });
 
     function refreshReadyState() {
         const configError = api.getAnalysisConfigurationError();
@@ -80,7 +66,6 @@ document.addEventListener('DOMContentLoaded', () => {
             ui.showConfigurationRequiredState(configError);
             return;
         }
-
         ui.showReadyToStartState();
     }
 
@@ -98,11 +83,11 @@ document.addEventListener('DOMContentLoaded', () => {
         reader.onload = (e) => {
             const dataUrl = e.target.result;
             game.setImage(dataUrl);
-            ui.showImage(dataUrl, () => {
-                canvas.resizeCanvas();
-                canvas.clear();
-                refreshReadyState();
-            });
+            ui.showImage(
+                dataUrl,
+                () => { canvas.resizeCanvas(); canvas.clear(); refreshReadyState(); },
+                () => { game.reset(); ui.showError('Could not load the selected image file.', false); }
+            );
         };
         reader.readAsDataURL(file);
     });
@@ -117,16 +102,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ui.showLoadingState('Generating image...');
         try {
-            const dataUrl = await api.generateImage(prompt);
-            game.setImage(dataUrl);
-            ui.showImage(dataUrl, () => {
-                canvas.resizeCanvas();
-                canvas.clear();
-                refreshReadyState();
-            });
+            const imageUrl = await api.generateImage(prompt);
+            game.setImage(imageUrl);
+            ui.showImage(
+                imageUrl,
+                () => { canvas.resizeCanvas(); canvas.clear(); refreshReadyState(); },
+                () => {
+                    // URL returned OK but browser could not load the image (service busy, etc.)
+                    game.reset();
+                    ui.showError('Image failed to load. The generation service may be busy -- please try again.', false);
+                }
+            );
         } catch (error) {
             console.error('Error generating image:', error);
-            ui.showError(`Error generating image: ${error.message}`);
+            game.reset();
+            ui.showError(`Image generation failed: ${error.message}`, false);
         }
     });
 
@@ -167,22 +157,30 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        ui.showLoadingState('Analyzing image...');
+        ui.showLoadingState('Analyzing image... (this may take up to 60 s)');
         try {
-            const analysisResult = await api.analyzeImage(game.getImageDataUrl(), imagePreview.naturalWidth, imagePreview.naturalHeight);
+            const analysisResult = await api.analyzeImage(
+                game.getImageDataUrl(),
+                imagePreview.naturalWidth,
+                imagePreview.naturalHeight
+            );
 
             if (!analysisResult || !analysisResult.objects || analysisResult.objects.length === 0) {
-                ui.showError('AI could not find enough objects. Please try another image.');
+                ui.showError('AI could not find any objects. Try a different image or analysis model.', true);
                 return;
             }
 
-            const scaledObjects = game.processObjects(analysisResult.objects, imagePreview.naturalWidth, imagePreview.naturalHeight);
+            const scaledObjects = game.processObjects(
+                analysisResult.objects,
+                imagePreview.naturalWidth,
+                imagePreview.naturalHeight
+            );
 
             if (scaledObjects.length === 0) {
-                 ui.showError('AI returned object data in an unexpected format. Please try another image.');
-                 return;
+                ui.showError('AI returned data in an unexpected format. Please try again.', true);
+                return;
             }
-            
+
             game.start(scaledObjects);
             ui.startGameUI(game.getObjects());
 
@@ -192,9 +190,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             console.error('Error starting game:', error);
             const errorMessage = error.message.includes('JSON')
-                ? 'The AI returned an invalid response. Please try again.'
-                : `Error starting game: ${error.message}`;
-            ui.showError(errorMessage);
+                ? 'The AI returned an invalid response. Try a different model or image.'
+                : `Analysis failed: ${error.message}`;
+            // hasValidImage=true keeps Start button enabled so user can retry
+            ui.showError(errorMessage, true);
         }
     });
 
@@ -215,11 +214,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 ui.showWinState();
             }
         }
-    });
-
-    // Handle mouse leaving the canvas
-    boundingBoxCanvas.addEventListener('mouseleave', () => {
-        // Future hover effects could be cleared here.
     });
 
     // Handle window resizing
