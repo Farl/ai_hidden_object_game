@@ -297,27 +297,64 @@ export function getAnalysisConfigurationError() {
 // Model discovery
 // ---------------------------------------------------------------------------
 
-/** Known image generation models (fallback — the API only returns a subset). */
+const POLLINATIONS_MODELS_ENDPOINT = 'https://gen.pollinations.ai/v1/models';
+const POLLINATIONS_TEXT_MODELS_ENDPOINT = 'https://gen.pollinations.ai/text/models';
+
+// Conservative fallback used only when discovery endpoints fail.
 const FALLBACK_IMAGE_MODELS = [
-    { value: 'flux',          label: 'Flux' },
-    { value: 'flux-realism',  label: 'Flux Realism' },
-    { value: 'flux-anime',    label: 'Flux Anime' },
-    { value: 'flux-3d',       label: 'Flux 3D' },
-    { value: 'turbo',         label: 'Turbo (fast)' },
-    { value: 'sana',          label: 'Sana' },
+    { value: 'flux', label: 'flux' },
+    { value: 'kontext', label: 'kontext' },
+    { value: 'gptimage', label: 'gptimage' },
 ];
 
-/** Known vision-capable analysis models (fallback). */
+// Conservative fallback used only when discovery endpoints fail.
 const FALLBACK_ANALYSIS_MODELS = [
-    { value: 'openai',        label: 'OpenAI GPT-4o' },
-    { value: 'openai-large',  label: 'OpenAI GPT-4o Large' },
-    { value: 'gemini',        label: 'Gemini' },
-    { value: 'gemini-fast',   label: 'Gemini Flash' },
-    { value: 'gemini-large',  label: 'Gemini Large' },
-    { value: 'claude',        label: 'Claude' },
-    { value: 'claude-large',  label: 'Claude Large' },
-    { value: 'qwen-vision',   label: 'Qwen Vision' },
+    { value: 'openai', label: 'openai' },
+    { value: 'openai-fast', label: 'openai-fast' },
+    { value: 'openai-large', label: 'openai-large' },
+    { value: 'mistral', label: 'mistral' },
+    { value: 'qwen-vision', label: 'qwen-vision' },
 ];
+
+const IMAGE_MODEL_PREFERENCE = ['flux', 'kontext', 'gptimage', 'gpt-image-2', 'qwen-image'];
+const ANALYSIS_MODEL_PREFERENCE = ['openai', 'openai-fast', 'openai-large', 'mistral', 'qwen-vision'];
+
+function byPreference(ids) {
+    return (a, b) => {
+        const ai = ids.indexOf(a.value);
+        const bi = ids.indexOf(b.value);
+
+        if (ai === -1 && bi === -1) return a.label.localeCompare(b.label);
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+    };
+}
+
+function dedupeModels(models) {
+    const seen = new Set();
+    return models.filter(model => {
+        if (!model?.value || seen.has(model.value)) {
+            return false;
+        }
+        seen.add(model.value);
+        return true;
+    });
+}
+
+async function fetchUnifiedModelCatalog() {
+    const res = await fetch(POLLINATIONS_MODELS_ENDPOINT);
+    if (!res.ok) {
+        throw new Error(`Model discovery failed: ${res.status}`);
+    }
+
+    const payload = await res.json();
+    if (!payload || !Array.isArray(payload.data)) {
+        throw new Error('Model discovery returned unexpected payload.');
+    }
+
+    return payload.data;
+}
 
 /**
  * Fetches image generation models from Pollinations.
@@ -326,20 +363,17 @@ const FALLBACK_ANALYSIS_MODELS = [
  */
 export async function fetchImageModels() {
     try {
-        const res = await fetch('https://image.pollinations.ai/models');
-        if (!res.ok) return FALLBACK_IMAGE_MODELS;
-        const names = await res.json();
-        if (!Array.isArray(names) || names.length < 2) return FALLBACK_IMAGE_MODELS;
-        // Merge API list with fallback so known labels are preserved
-        const fromApi = names.map(n => {
-            const known = FALLBACK_IMAGE_MODELS.find(m => m.value === n);
-            return known || { value: n, label: n };
-        });
-        // Prepend fallback entries not in API list so flagship models are always shown
-        FALLBACK_IMAGE_MODELS.forEach(fb => {
-            if (!fromApi.find(m => m.value === fb.value)) fromApi.unshift(fb);
-        });
-        return fromApi;
+        const catalog = await fetchUnifiedModelCatalog();
+        const models = catalog
+            .filter(m => (m.output_modalities || []).includes('image'))
+            .filter(m => {
+                const endpoints = m.supported_endpoints || [];
+                return endpoints.includes('/image/{prompt}') || endpoints.includes('/v1/images/generations');
+            })
+            .map(m => ({ value: m.id, label: m.id }));
+
+        const deduped = dedupeModels(models).sort(byPreference(IMAGE_MODEL_PREFERENCE));
+        return deduped.length > 0 ? deduped : FALLBACK_IMAGE_MODELS;
     } catch {
         return FALLBACK_IMAGE_MODELS;
     }
@@ -353,17 +387,27 @@ export async function fetchImageModels() {
  */
 export async function fetchAnalysisModels() {
     try {
-        const res = await fetch('https://gen.pollinations.ai/text/models');
+        const res = await fetch(POLLINATIONS_TEXT_MODELS_ENDPOINT);
         if (!res.ok) return FALLBACK_ANALYSIS_MODELS;
         const models = await res.json();
+        if (!Array.isArray(models)) return FALLBACK_ANALYSIS_MODELS;
+
+        // Keep only chat-capable, vision-capable text models for image object detection.
         const visionModels = models
             .filter(m => Array.isArray(m.input_modalities) && m.input_modalities.includes('image'))
-            .map(m => {
-                const known = FALLBACK_ANALYSIS_MODELS.find(fb => fb.value === m.name);
-                const label = known?.label || m.description || m.name;
-                return { value: m.name, label };
-            });
-        return visionModels.length > 0 ? visionModels : FALLBACK_ANALYSIS_MODELS;
+            .filter(m => Array.isArray(m.output_modalities) && m.output_modalities.includes('text'))
+            .filter(m => m.paid_only !== true)
+            .filter(m => {
+                const endpoints = m.supported_endpoints;
+                if (!Array.isArray(endpoints) || endpoints.length === 0) {
+                    return true;
+                }
+                return endpoints.includes('/v1/chat/completions');
+            })
+            .map(m => ({ value: m.name, label: m.name }));
+
+        const deduped = dedupeModels(visionModels).sort(byPreference(ANALYSIS_MODEL_PREFERENCE));
+        return deduped.length > 0 ? deduped : FALLBACK_ANALYSIS_MODELS;
     } catch {
         return FALLBACK_ANALYSIS_MODELS;
     }
