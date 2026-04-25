@@ -65,3 +65,15 @@ Recommended setup for a public Pages site:
 Published site:
 
 - https://farl.github.io/ai_hidden_object_game/
+
+## Validation pipeline
+
+This repository now includes a formal validation workflow at `.github/workflows/validate.yml`.
+
+- `static-checks`: runs `node --check` on all runtime files and `test-analysis.mjs`
+
+To run the same smoke test locally:
+
+```bash
+node test-analysis.mjs --model openai-fast --prompt normalized
+```
