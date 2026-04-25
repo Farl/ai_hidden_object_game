@@ -15,9 +15,9 @@ const DEFAULT_CONFIG = {
     GITHUB_API_VERSION: '2026-03-10'
 };
 
-const OBJECT_DETECTION_SYSTEM_PROMPT = `You are an expert of object detection. The input image dimensions are provided by the user. Your task is to identify 3 to 10 distinct, visually findable objects within the input image. For each object you identify, you must provide its name and a highly accurate bounding box.
+const OBJECT_DETECTION_SYSTEM_PROMPT = `You are an expert object detector. Your task is to identify 3 to 10 distinct, visually findable objects within the input image.
 
-The bounding box coordinates must be in ABSOLUTE PIXELS, relative to the top-left corner of the image (0,0). The format is [top, left, bottom, right], where each value is an integer.
+For each object, provide a bounding box in a NORMALIZED 0-1000 coordinate space where (0, 0) is the top-left corner and (1000, 1000) is the bottom-right corner of the image. The format is [top, left, bottom, right], where each value is an integer between 0 and 1000.
 
 Respond ONLY with a JSON object that adheres strictly to the following schema. Do not include explanatory text or markdown formatting.
 {
@@ -135,6 +135,9 @@ async function generateImageWithPollinations(prompt, config) {
     const baseUrl = normalizeBaseUrl(config.POLLINATIONS_IMAGE_BASE_URL);
     const imageUrl = new URL(`${baseUrl}/${encodeURIComponent(prompt)}`);
     imageUrl.searchParams.set('model', config.POLLINATIONS_IMAGE_MODEL);
+    // Fix: seed makes the URL deterministic so the browser display and the
+    // AI analysis call both receive exactly the same generated image.
+    imageUrl.searchParams.set('seed', String(Math.floor(Math.random() * 1_000_000)));
 
     return imageUrl.toString();
 }
@@ -152,7 +155,7 @@ async function analyzeWithPollinations(imageDataUrl, width, height, config) {
                 role: 'user',
                 content: [
                     { type: 'image_url', image_url: { url: imageDataUrl } },
-                    { type: 'text', text: `The image dimensions are ${width}x${height}. List 3 to 10 main objects in this image.` }
+                    { type: 'text', text: 'List 3 to 10 main objects in this image with their bounding boxes in normalized 0-1000 coordinates.' }
                 ]
             }
         ],
@@ -184,7 +187,7 @@ async function analyzeWithGitHubModels(imageDataUrl, width, height, config) {
                 role: 'user',
                 content: [
                     { type: 'image_url', image_url: { url: imageDataUrl } },
-                    { type: 'text', text: `The image dimensions are ${width}x${height}. List 3 to 10 main objects in this image.` }
+                    { type: 'text', text: 'List 3 to 10 main objects in this image with their bounding boxes in normalized 0-1000 coordinates.' }
                 ]
             }
         ],

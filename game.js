@@ -37,8 +37,9 @@ export function setImage(dataUrl) {
 
 /** Processes raw AI object data, preparing it for the game. */
 export function processObjects(rawObjects, imageWidth, imageHeight) {
-    const scaleX = imageWidth / 1024;
-    const scaleY = imageHeight / 1024;
+    // Model returns coordinates in a 0-1000 normalized space.
+    const scaleX = imageWidth / 1000;
+    const scaleY = imageHeight / 1000;
 
     return rawObjects.map((obj, index) => {
         const box = obj.box_2d || obj.box2d;
@@ -47,7 +48,7 @@ export function processObjects(rawObjects, imageWidth, imageHeight) {
             return null;
         }
         
-        // Scale coordinates from a 1024x1024 space to the actual image dimensions
+        // Scale coordinates from 0-1000 normalized space to actual image dimensions
         const scaledBox = [
             Math.round(box[0] * scaleY), // top
             Math.round(box[1] * scaleX), // left
