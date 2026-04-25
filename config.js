@@ -3,7 +3,7 @@ window.AI_HIDDEN_OBJECT_CONFIG = {
     IMAGE_PROVIDER: 'pollinations',
     ANALYSIS_PROVIDER: 'pollinations',
     POLLINATIONS_API_BASE_URL: 'https://gen.pollinations.ai',
-    POLLINATIONS_IMAGE_BASE_URL: 'https://image.pollinations.ai/prompt',
+    POLLINATIONS_IMAGE_BASE_URL: 'https://gen.pollinations.ai/image',
     POLLINATIONS_API_KEY: '',
     POLLINATIONS_IMAGE_MODEL: 'flux',
     POLLINATIONS_TEXT_MODEL: 'openai',
