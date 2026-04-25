@@ -77,3 +77,30 @@ To run the same smoke test locally:
 ```bash
 node test-analysis.mjs --model openai-fast --prompt normalized
 ```
+
+## Prompt lab
+
+For repeated prompt experiments with overlaid bounding boxes and a second review pass:
+
+```bash
+node prompt-lab.mjs
+node prompt-lab.mjs ./my-image.png --model gemini-fast
+node prompt-lab.mjs ./my-image.png --model gemini-fast --prompt coord-visible
+node prompt-lab.mjs ./my-image.png --model openai,gemini-fast --review-model gemini-fast --prompt coord-baseline,coord-visible,coord-grid,coord-verify
+```
+
+The script writes JSON reports and overlaid images into `lab-output/`, so you can compare which prompt produces the most accurate boxes on the same source image.
+
+## Synthetic benchmark
+
+For a controlled localization benchmark with known ground truth:
+
+```bash
+node prompt-lab.mjs benchmark/matrix-benchmark.png \
+  --ground-truth benchmark/matrix-benchmark.ground-truth.json \
+  --model openai-fast \
+  --review-model openai-fast \
+  --prompt bench-matrix-baseline,bench-matrix-visible
+```
+
+The benchmark image contains a 3x3 matrix of colored geometric shapes with exact labels and normalized ground-truth boxes, so the lab can compute mean IoU in addition to model-reviewed box scores.

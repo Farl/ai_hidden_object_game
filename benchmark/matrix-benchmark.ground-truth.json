@@ -1,0 +1,54 @@
+{
+  "name": "matrix-benchmark",
+  "description": "Nine large colored geometric shapes arranged in a 3x3 matrix for localization benchmarking.",
+  "image": "benchmark/matrix-benchmark.png",
+  "image_width": 900,
+  "image_height": 900,
+  "objects": [
+    {
+      "label": "red circle",
+      "aliases": ["red circle", "circle", "red round shape"],
+      "box_2d": [78, 78, 256, 256]
+    },
+    {
+      "label": "blue square",
+      "aliases": ["blue square", "square", "blue box"],
+      "box_2d": [78, 411, 256, 589]
+    },
+    {
+      "label": "green triangle",
+      "aliases": ["green triangle", "triangle"],
+      "box_2d": [78, 744, 256, 922]
+    },
+    {
+      "label": "orange diamond",
+      "aliases": ["orange diamond", "diamond"],
+      "box_2d": [411, 78, 589, 256]
+    },
+    {
+      "label": "purple star",
+      "aliases": ["purple star", "star"],
+      "box_2d": [411, 411, 589, 589]
+    },
+    {
+      "label": "teal hexagon",
+      "aliases": ["teal hexagon", "hexagon", "cyan hexagon"],
+      "box_2d": [411, 744, 589, 922]
+    },
+    {
+      "label": "yellow rounded rectangle",
+      "aliases": ["yellow rounded rectangle", "rounded rectangle", "yellow rectangle"],
+      "box_2d": [744, 78, 922, 256]
+    },
+    {
+      "label": "pink plus",
+      "aliases": ["pink plus", "plus", "pink cross"],
+      "box_2d": [744, 411, 922, 589]
+    },
+    {
+      "label": "black ring",
+      "aliases": ["black ring", "ring", "black donut", "donut"],
+      "box_2d": [744, 744, 922, 922]
+    }
+  ]
+}

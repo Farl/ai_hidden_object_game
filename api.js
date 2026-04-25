@@ -1,4 +1,5 @@
 // api.js - Handles interactions with the AI services through provider adapters.
+import { drawBoundingBoxOverlayDataUrl, urlToDataUrl } from './utils.js';
 
 // Timeout for all AI API requests (60 s)
 const API_TIMEOUT_MS = 60_000;
@@ -11,16 +12,27 @@ const DEFAULT_CONFIG = {
     POLLINATIONS_IMAGE_BASE_URL: 'https://gen.pollinations.ai/image',
     POLLINATIONS_API_KEY: '',
     POLLINATIONS_IMAGE_MODEL: 'flux',
-    POLLINATIONS_TEXT_MODEL: 'openai',
+    POLLINATIONS_TEXT_MODEL: 'gemini-fast',
+    ANALYSIS_ENABLE_REVIEW_PASS: true,
     GITHUB_MODELS_BASE_URL: 'https://models.github.ai',
     GITHUB_TOKEN: '',
     GITHUB_MODEL: 'openai/gpt-4.1-mini',
     GITHUB_API_VERSION: '2026-03-10'
 };
 
-const OBJECT_DETECTION_SYSTEM_PROMPT = `You are an expert object detector. Your task is to identify 3 to 10 distinct, visually findable objects within the input image.
+const OBJECT_DETECTION_SYSTEM_PROMPT = `You are evaluating object localization accuracy.
 
-For each object, provide a bounding box in a NORMALIZED 0-1000 coordinate space where (0, 0) is the top-left corner and (1000, 1000) is the bottom-right corner of the image. The format is [top, left, bottom, right], where each value is an integer between 0 and 1000.
+Identify 4 to 6 prominent visible objects in the image. Your only goal is accurate localization.
+
+For each object:
+- return one tight bounding box around only the visible extent of that object
+- if part of an object is hidden, do not include the hidden portion
+- do not include large background margins
+- do not merge multiple objects into one box
+- do not return scene regions like wall, floor, or window area
+- avoid tiny objects when their boundaries are hard to localize precisely
+
+Use NORMALIZED 0-1000 coordinates where (0, 0) is the top-left corner and (1000, 1000) is the bottom-right corner of the image. The format is [top, left, bottom, right], where each value is an integer between 0 and 1000.
 
 Respond ONLY with a JSON object that adheres strictly to the following schema. Do not include explanatory text or markdown formatting.
 {
@@ -28,6 +40,31 @@ Respond ONLY with a JSON object that adheres strictly to the following schema. D
     {
       "box_2d": [number, number, number, number],
       "label": string
+    }
+  ]
+}`;
+
+const OBJECT_DETECTION_USER_PROMPT = 'Return 4 to 6 prominent visible objects with tight normalized bounding boxes that cover only the visible extent of each object.';
+
+const OBJECT_REVIEW_SYSTEM_PROMPT = `You are reviewing bounding boxes that are already drawn on the image.
+
+Each box has an integer id printed near its top-left corner. The user will provide the id-to-label mapping. Your only goal is to correct box coordinates so they tightly match the visible extent of the labeled object.
+
+Rules:
+- keep the same ids and labels
+- correct the box if it has extra padding, is shifted, or misses part of the visible object
+- return only one box per provided id
+- do not invent new objects
+- do not remove objects unless the box is completely unusable; in that case keep the original label and return your best correction
+- coordinates must stay in NORMALIZED 0-1000 space
+
+Respond ONLY with a JSON object in this schema:
+{
+  "objects": [
+    {
+      "id": number,
+      "label": string,
+      "box_2d": [number, number, number, number]
     }
   ]
 }`;
@@ -144,6 +181,145 @@ function parseModelJson(rawContent) {
     }
 }
 
+function buildChatPayload(model, systemPrompt, userText, imageUrlOrDataUrl, extra = {}) {
+    return {
+        model,
+        messages: [
+            {
+                role: 'system',
+                content: systemPrompt
+            },
+            {
+                role: 'user',
+                content: [
+                    { type: 'image_url', image_url: { url: imageUrlOrDataUrl } },
+                    { type: 'text', text: userText }
+                ]
+            }
+        ],
+        response_format: {
+            type: 'json_object'
+        },
+        stream: false,
+        ...extra
+    };
+}
+
+async function requestPollinationsJson(payload, config) {
+    const baseUrl = normalizeBaseUrl(config.POLLINATIONS_API_BASE_URL);
+    const result = await postJson(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: buildPollinationsHeaders(config),
+        body: JSON.stringify(payload)
+    });
+
+    return parseModelJson(extractTextContent(result?.choices?.[0]?.message?.content || ''));
+}
+
+async function requestGitHubJson(payload, config) {
+    const baseUrl = normalizeBaseUrl(config.GITHUB_MODELS_BASE_URL);
+    const result = await postJson(`${baseUrl}/inference/chat/completions`, {
+        method: 'POST',
+        headers: buildGitHubHeaders(config),
+        body: JSON.stringify(payload)
+    });
+
+    return parseModelJson(extractTextContent(result?.choices?.[0]?.message?.content || ''));
+}
+
+function normalizeDetectedObjects(objects = []) {
+    return objects
+        .map((object, index) => {
+            const box = normalizeBox(object?.box_2d || object?.box2d);
+            if (!box) {
+                return null;
+            }
+
+            return {
+                id: index + 1,
+                label: String(object?.label || `object_${index + 1}`).trim() || `object_${index + 1}`,
+                box_2d: box
+            };
+        })
+        .filter(Boolean)
+        .slice(0, 6);
+}
+
+function normalizeReviewedObjects(objects = [], originalObjects = []) {
+    const originalsById = new Map(originalObjects.map(object => [object.id, object]));
+
+    return objects
+        .map(reviewed => {
+            const original = originalsById.get(Number(reviewed?.id));
+            if (!original) {
+                return null;
+            }
+
+            return {
+                id: original.id,
+                label: String(reviewed?.label || original.label).trim() || original.label,
+                box_2d: normalizeBox(reviewed?.box_2d || reviewed?.box2d) || original.box_2d
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.id - b.id);
+}
+
+function normalizeBox(box) {
+    if (!Array.isArray(box) || box.length !== 4) {
+        return null;
+    }
+
+    const values = box.map(value => clampNumber(value, 0, 1000));
+    const [top, left, bottom, right] = values;
+
+    if (bottom <= top || right <= left) {
+        return null;
+    }
+
+    return values;
+}
+
+function clampNumber(value, min, max) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return min;
+    }
+    return Math.max(min, Math.min(max, Math.round(numeric)));
+}
+
+function buildReviewUserPrompt(objects) {
+    return [
+        'Review these boxes and correct them if needed.',
+        'Keep the same ids and labels.',
+        'Objects:',
+        ...objects.map(object => `${object.id}: ${object.label} ${JSON.stringify(object.box_2d)}`)
+    ].join('\n');
+}
+
+async function refineDetectedObjects(initialObjects, imageDataUrl, width, height, requestJson, model, payloadExtras, config) {
+    if (!config.ANALYSIS_ENABLE_REVIEW_PASS || !initialObjects.length || typeof document === 'undefined') {
+        return initialObjects;
+    }
+
+    try {
+        const overlayDataUrl = await drawBoundingBoxOverlayDataUrl(imageDataUrl, initialObjects, width, height);
+        const reviewPayload = buildChatPayload(
+            model,
+            OBJECT_REVIEW_SYSTEM_PROMPT,
+            buildReviewUserPrompt(initialObjects),
+            overlayDataUrl,
+            payloadExtras
+        );
+        const reviewResult = await requestJson(reviewPayload, config);
+        const refinedObjects = normalizeReviewedObjects(reviewResult?.objects || [], initialObjects);
+        return refinedObjects.length === initialObjects.length ? refinedObjects : initialObjects;
+    } catch (error) {
+        console.warn('Second-pass box refinement failed, keeping first-pass boxes.', error);
+        return initialObjects;
+    }
+}
+
 async function generateImageWithPollinations(prompt, config) {
     const baseUrl = normalizeBaseUrl(config.POLLINATIONS_IMAGE_BASE_URL);
     const imageUrl = new URL(`${baseUrl}/${encodeURIComponent(prompt)}`);
@@ -157,73 +333,62 @@ async function generateImageWithPollinations(prompt, config) {
         imageUrl.searchParams.set('key', config.POLLINATIONS_API_KEY);
     }
 
-    return imageUrl.toString();
+    const generatedUrl = imageUrl.toString();
+
+    return await urlToDataUrl(generatedUrl);
 }
 
 async function analyzeWithPollinations(imageDataUrl, width, height, config) {
-    const baseUrl = normalizeBaseUrl(config.POLLINATIONS_API_BASE_URL);
-    const payload = {
-        model: config.POLLINATIONS_TEXT_MODEL,
-        messages: [
-            {
-                role: 'system',
-                content: OBJECT_DETECTION_SYSTEM_PROMPT
-            },
-            {
-                role: 'user',
-                content: [
-                    { type: 'image_url', image_url: { url: imageDataUrl } },
-                    { type: 'text', text: 'List 3 to 10 main objects in this image with their bounding boxes in normalized 0-1000 coordinates.' }
-                ]
-            }
-        ],
-        response_format: {
-            type: 'json_object'
-        },
-        stream: false
-    };
+    const model = config.POLLINATIONS_TEXT_MODEL;
+    const payload = buildChatPayload(
+        model,
+        OBJECT_DETECTION_SYSTEM_PROMPT,
+        OBJECT_DETECTION_USER_PROMPT,
+        imageDataUrl
+    );
+    const initialResult = await requestPollinationsJson(payload, config);
+    const initialObjects = normalizeDetectedObjects(initialResult?.objects || []);
+    const refinedObjects = await refineDetectedObjects(
+        initialObjects,
+        imageDataUrl,
+        width,
+        height,
+        requestPollinationsJson,
+        model,
+        {},
+        config
+    );
 
-    const result = await postJson(`${baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: buildPollinationsHeaders(config),
-        body: JSON.stringify(payload)
-    });
-
-    return parseModelJson(extractTextContent(result?.choices?.[0]?.message?.content || ''));
+    return { objects: refinedObjects };
 }
 
 async function analyzeWithGitHubModels(imageDataUrl, width, height, config) {
-    const baseUrl = normalizeBaseUrl(config.GITHUB_MODELS_BASE_URL);
-    const payload = {
-        model: config.GITHUB_MODEL,
-        messages: [
-            {
-                role: 'system',
-                content: OBJECT_DETECTION_SYSTEM_PROMPT
-            },
-            {
-                role: 'user',
-                content: [
-                    { type: 'image_url', image_url: { url: imageDataUrl } },
-                    { type: 'text', text: 'List 3 to 10 main objects in this image with their bounding boxes in normalized 0-1000 coordinates.' }
-                ]
-            }
-        ],
-        response_format: {
-            type: 'json_object'
-        },
+    const model = config.GITHUB_MODEL;
+    const payloadOptions = {
         max_tokens: 1000,
-        temperature: 0.2,
-        stream: false
+        temperature: 0.2
     };
+    const payload = buildChatPayload(
+        model,
+        OBJECT_DETECTION_SYSTEM_PROMPT,
+        OBJECT_DETECTION_USER_PROMPT,
+        imageDataUrl,
+        payloadOptions
+    );
+    const initialResult = await requestGitHubJson(payload, config);
+    const initialObjects = normalizeDetectedObjects(initialResult?.objects || []);
+    const refinedObjects = await refineDetectedObjects(
+        initialObjects,
+        imageDataUrl,
+        width,
+        height,
+        requestGitHubJson,
+        model,
+        payloadOptions,
+        config
+    );
 
-    const result = await postJson(`${baseUrl}/inference/chat/completions`, {
-        method: 'POST',
-        headers: buildGitHubHeaders(config),
-        body: JSON.stringify(payload)
-    });
-
-    return parseModelJson(extractTextContent(result?.choices?.[0]?.message?.content || ''));
+    return { objects: refinedObjects };
 }
 
 /**
@@ -324,6 +489,7 @@ const FALLBACK_IMAGE_MODELS = [
 
 // Conservative fallback used only when discovery endpoints fail.
 const FALLBACK_ANALYSIS_MODELS = [
+    { value: 'gemini-fast', label: 'gemini-fast' },
     { value: 'openai', label: 'openai' },
     { value: 'openai-fast', label: 'openai-fast' },
     { value: 'openai-large', label: 'openai-large' },
@@ -332,7 +498,7 @@ const FALLBACK_ANALYSIS_MODELS = [
 ];
 
 const IMAGE_MODEL_PREFERENCE = ['flux', 'kontext', 'gptimage', 'gpt-image-2', 'qwen-image'];
-const ANALYSIS_MODEL_PREFERENCE = ['openai', 'openai-fast', 'openai-large', 'mistral', 'qwen-vision'];
+const ANALYSIS_MODEL_PREFERENCE = ['gemini-fast', 'openai', 'openai-fast', 'openai-large', 'mistral', 'qwen-vision'];
 
 function parseCostNumber(value) {
     if (typeof value === 'number') {
