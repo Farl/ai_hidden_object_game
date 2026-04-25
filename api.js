@@ -8,7 +8,7 @@ const DEFAULT_CONFIG = {
     IMAGE_PROVIDER: 'pollinations',
     ANALYSIS_PROVIDER: 'pollinations',
     POLLINATIONS_API_BASE_URL: 'https://gen.pollinations.ai',
-    POLLINATIONS_IMAGE_BASE_URL: 'https://image.pollinations.ai/prompt',
+    POLLINATIONS_IMAGE_BASE_URL: 'https://gen.pollinations.ai/image',
     POLLINATIONS_API_KEY: '',
     POLLINATIONS_IMAGE_MODEL: 'flux',
     POLLINATIONS_TEXT_MODEL: 'openai',
@@ -151,6 +151,11 @@ async function generateImageWithPollinations(prompt, config) {
     // Fix: seed makes the URL deterministic so the browser display and the
     // AI analysis call both receive exactly the same generated image.
     imageUrl.searchParams.set('seed', String(Math.floor(Math.random() * 1_000_000)));
+    // New unified endpoint requires the API key as a query parameter.
+    // Without a key it returns 401; old endpoint (image.pollinations.ai) ignored the model param.
+    if (config.POLLINATIONS_API_KEY) {
+        imageUrl.searchParams.set('key', config.POLLINATIONS_API_KEY);
+    }
 
     return imageUrl.toString();
 }
@@ -273,6 +278,16 @@ export function getActiveProviders() {
     };
 }
 
+export function getImageConfigurationError() {
+    const config = getConfig();
+    const provider = getProvider('image');
+
+    if (provider === 'pollinations' && !config.POLLINATIONS_API_KEY) {
+        return 'Image generation requires a Pollinations API key. Get one at enter.pollinations.ai and add POLLINATIONS_API_KEY in config.js.';
+    }
+    return '';
+}
+
 export function getAnalysisConfigurationError() {
     const config = getConfig();
     const provider = getProvider('analysis');
@@ -280,7 +295,7 @@ export function getAnalysisConfigurationError() {
     switch (provider) {
         case 'pollinations':
             if (!config.POLLINATIONS_API_KEY) {
-                return 'AI analysis is not configured. Add POLLINATIONS_API_KEY in config.js, or switch ANALYSIS_PROVIDER to github and provide GITHUB_TOKEN.';
+                return 'AI analysis requires a Pollinations API key. Get one at enter.pollinations.ai and add POLLINATIONS_API_KEY in config.js.';
             }
             return '';
         case 'github':
@@ -297,7 +312,6 @@ export function getAnalysisConfigurationError() {
 // Model discovery
 // ---------------------------------------------------------------------------
 
-const POLLINATIONS_MODELS_ENDPOINT = 'https://gen.pollinations.ai/v1/models';
 const POLLINATIONS_IMAGE_MODELS_ENDPOINT = 'https://gen.pollinations.ai/image/models';
 const POLLINATIONS_TEXT_MODELS_ENDPOINT = 'https://gen.pollinations.ai/text/models';
 
@@ -340,7 +354,6 @@ function getModelCostInfo(pricing) {
 
     const promptCost = parseCostNumber(pricing.promptTextTokens);
     const completionCost = parseCostNumber(pricing.completionTextTokens);
-    const currency = typeof pricing.currency === 'string' ? pricing.currency : 'pollen';
 
     if (promptCost !== null && completionCost !== null) {
         const score = promptCost + completionCost;
@@ -394,20 +407,6 @@ function dedupeModels(models) {
         seen.add(model.value);
         return true;
     });
-}
-
-async function fetchUnifiedModelCatalog() {
-    const res = await fetch(POLLINATIONS_MODELS_ENDPOINT);
-    if (!res.ok) {
-        throw new Error(`Model discovery failed: ${res.status}`);
-    }
-
-    const payload = await res.json();
-    if (!payload || !Array.isArray(payload.data)) {
-        throw new Error('Model discovery returned unexpected payload.');
-    }
-
-    return payload.data;
 }
 
 /**

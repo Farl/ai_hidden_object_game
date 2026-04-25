@@ -98,7 +98,8 @@ document.addEventListener('DOMContentLoaded', () => {
         .catch(() => { /* keep placeholder selection on fetch failure */ });
 
     function refreshReadyState() {
-        const configError = api.getAnalysisConfigurationError();
+        const imageConfigError = api.getImageConfigurationError();
+        const configError = imageConfigError || api.getAnalysisConfigurationError();
         if (configError) {
             ui.showConfigurationRequiredState(configError);
             return;
@@ -134,6 +135,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const prompt = genPromptInput.value.trim();
         if (!prompt) {
             alert('Please enter a prompt for image generation!');
+            return;
+        }
+
+        const imageConfigError = api.getImageConfigurationError();
+        if (imageConfigError) {
+            ui.showConfigurationRequiredState(imageConfigError);
             return;
         }
 
