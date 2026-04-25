@@ -14,6 +14,7 @@ export function init(domElements) {
  * Resets the UI to its initial pre-game state.
  */
 export function reset() {
+    console.trace('[ui.reset] called — image will be cleared');
     document.body.classList.remove('game-active');
     elements.imageContainer.style.display = 'none';
     elements.imagePreview.src = '';
