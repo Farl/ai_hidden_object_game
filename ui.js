@@ -78,6 +78,18 @@ export function showReadyToStartState() {
 }
 
 /**
+ * Shows a configuration-required state when AI analysis is not ready to use.
+ * @param {string} message - The configuration message to display.
+ */
+export function showConfigurationRequiredState(message) {
+    elements.gameStatusContainer.innerHTML = `<p style="color: #b26a00;">${message}</p>`;
+    setButtonState(elements.fileInput, null, false);
+    setButtonState(elements.generateImageButton, 'Generate Image', false);
+    setButtonState(elements.startGameButton, 'Start New Game', true);
+    elements.giveUpButton.style.display = 'none';
+}
+
+/**
  * Sets up the UI for an active game session.
  * @param {Array<object>} gameObjects - The list of objects to find.
  */

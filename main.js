@@ -30,6 +30,16 @@ document.addEventListener('DOMContentLoaded', () => {
         gameStatusContainer
     });
 
+    function refreshReadyState() {
+        const configError = api.getAnalysisConfigurationError();
+        if (configError) {
+            ui.showConfigurationRequiredState(configError);
+            return;
+        }
+
+        ui.showReadyToStartState();
+    }
+
     // --- Event Listeners ---
 
     // Handle image selection via file input
@@ -47,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ui.showImage(dataUrl, () => {
                 canvas.resizeCanvas();
                 canvas.clear();
-                ui.enableStartButton();
+                refreshReadyState();
             });
         };
         reader.readAsDataURL(file);
@@ -68,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ui.showImage(dataUrl, () => {
                 canvas.resizeCanvas();
                 canvas.clear();
-                ui.showReadyToStartState();
+                refreshReadyState();
             });
         } catch (error) {
             console.error('Error generating image:', error);
@@ -91,11 +101,18 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Please select or generate an image first!');
             return;
         }
+
+        const configError = api.getAnalysisConfigurationError();
+        if (configError) {
+            ui.showConfigurationRequiredState(configError);
+            return;
+        }
+
         if (game.isGameActive()) {
             game.reset();
             ui.reset();
             canvas.clear();
-            ui.showReadyToStartState();
+            refreshReadyState();
             return;
         }
 
