@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Hidden Object Game</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background-color: #f0f2f5;
+            transition: padding 0.3s ease;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            max-width: 800px; /* Increased width for game layout */
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            transition: all 0.3s ease;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        h2 {
+            color: #444;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .setup-section {
+            text-align: center;
+        }
+        .game-section {
+             display: flex;
+             gap: 20px;
+             margin-top: 20px;
+             flex-shrink: 0; /* Prevent shrinking when container is flex column */
+        }
+        .image-display-area {
+            flex: 3; /* Image takes more space */
+        }
+        .game-info-area {
+            flex: 1; /* List takes less space */
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        input[type="file"],
+        textarea {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: calc(100% - 22px);
+            box-sizing: border-box;
+            resize: vertical;
+            min-height: 60px;
+        }
+        textarea {
+            min-height: 80px;
+        }
+        .image-container {
+            position: relative;
+            width: 100%;
+            height: 450px; /* Adjusted height for better aspect */
+            margin-bottom: 20px;
+            display: none;
+            border: 1px solid #eee;
+            border-radius: 5px;
+            background-color: #f0f0f0;
+            overflow: hidden;
+            cursor: pointer; /* Pointer cursor over the game area */
+            flex-grow: 1; /* Allow container to grow in fullscreen mode */
+        }
+        #imagePreview, #boundingBoxCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        #boundingBoxCanvas {
+            z-index: 2;
+        }
+        #imagePreview {
+            z-index: 1;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            margin-bottom: 10px;
+        }
+        button#startGameButton {
+             background-color: #28a745; /* Green for starting game */
+             width: 100%;
+        }
+        button#startGameButton:hover:not(:disabled) {
+            background-color: #218838;
+        }
+        button#giveUpButton {
+            background-color: #dc3545; /* Red for give up */
+            width: 100%;
+            margin-top: 15px;
+        }
+        button#giveUpButton:hover:not(:disabled) {
+            background-color: #c82333;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #objectListContainer {
+            margin-top: 10px;
+        }
+        #objectListContainer h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        #objectList {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+        #objectList li {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            color: #555;
+            transition: all 0.3s ease;
+        }
+        #objectList li.found {
+            text-decoration: line-through;
+            color: #999;
+            background-color: #e9f5e9;
+        }
+        hr {
+            border: none;
+            border-top: 1px solid #eee;
+            margin: 40px 0;
+            width: 100%;
+        }
+        #gameStatus {
+            min-height: 50px;
+            padding-top: 10px;
+        }
+        .win-message {
+            color: #28a745;
+            font-weight: bold;
+            font-size: 1.2em;
+            text-align: center;
+        }
+
+        /* --- Fullscreen Gameplay Styles --- */
+        body.game-active {
+            padding: 0;
+            overflow: hidden;
+        }
+
+        body.game-active .container {
+            max-width: 100%;
+            width: 100vw;
+            height: 100vh;
+            padding: 10px;
+            border-radius: 0;
+            box-shadow: none;
+        }
+
+        body.game-active .setup-section,
+        body.game-active h1,
+        body.game-active h2,
+        body.game-active hr {
+            display: none;
+        }
+
+        body.game-active .game-section {
+            flex-grow: 1;
+            /* Use calc to account for potential vertical padding on container */
+            height: calc(100% - 20px); 
+        }
+
+        body.game-active .image-display-area {
+            display: flex;
+            flex-direction: column;
+        }
+
+        body.game-active .image-container {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Hidden Object Game</h1>
+
+        <div class="setup-section">
+            <h2>1. Get an Image for the Game</h2>
+            <p>Upload your own image:</p>
+            <input type="file" id="fileInput" accept="image/*">
+            <p>- OR -</p>
+            <p>Generate an image with AI:</p>
+            <textarea id="genPromptInput" placeholder="Describe the scene you want to play in (e.g., 'A cluttered attic with many old objects')"></textarea>
+            <button id="generateImageButton">Generate Image</button>
+        </div>
+
+        <hr>
+
+        <h2>2. Find the Hidden Objects!</h2>
+        
+        <div class="game-section">
+            <div class="image-display-area">
+                <div class="image-container" id="imageContainer">
+                    <img id="imagePreview" src="" alt="Image Preview">
+                    <canvas id="boundingBoxCanvas"></canvas>
+                </div>
+                <button id="startGameButton" disabled>Start New Game</button>
+            </div>
+
+            <div class="game-info-area">
+                 <div id="objectListContainer">
+                    <h3>Objects to Find:</h3>
+                    <ul id="objectList"></ul>
+                 </div>
+                 <div id="gameStatus">
+                    <p>First, upload or generate an image, then click "Start New Game" to begin!</p>
+                 </div>
+                 <button id="giveUpButton" style="display: none;">Give Up</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>
