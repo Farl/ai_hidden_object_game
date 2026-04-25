@@ -208,6 +208,28 @@
         body.game-active .image-container {
             margin-bottom: 10px;
         }
+        .model-selector-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: #555;
+        }
+        .model-selector-row label {
+            white-space: nowrap;
+        }
+        .model-selector-row select {
+            flex: 1;
+            min-width: 140px;
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -221,6 +243,14 @@
             <p>- OR -</p>
             <p>Generate an image with AI:</p>
             <textarea id="genPromptInput" placeholder="Describe the scene you want to play in (e.g., 'A cluttered attic with many old objects')"></textarea>
+
+            <div class="model-selector-row">
+                <label for="imageModelSelect">Image model:</label>
+                <select id="imageModelSelect"></select>
+                <label for="analysisModelSelect">Analysis model:</label>
+                <select id="analysisModelSelect"></select>
+            </div>
+
             <button id="generateImageButton">Generate Image</button>
         </div>
 
@@ -238,6 +268,7 @@
             </div>
 
             <div class="game-info-area">
+                 <button id="newImageButton" style="display: none; background-color: #6c757d; width: 100%; margin-bottom: 12px;">← New Image</button>
                  <div id="objectListContainer">
                     <h3>Objects to Find:</h3>
                     <ul id="objectList"></ul>

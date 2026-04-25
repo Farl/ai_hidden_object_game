@@ -61,31 +61,58 @@ export function resizeCanvas() {
 }
 
 /**
+ * Computes the actual rendered bounds of the canvas bitmap within the CSS element box,
+ * accounting for the object-fit: contain letterboxing.
+ * @returns {{x: number, y: number, width: number, height: number}}
+ */
+function getRenderedBitmapRect() {
+    const elemRect = canvasEl.getBoundingClientRect();
+    const bitmapAR = canvasEl.width / canvasEl.height;
+    const elemAR = elemRect.width / elemRect.height;
+
+    let renderW, renderH, renderX, renderY;
+    if (bitmapAR > elemAR) {
+        // Bitmap is wider than element — letterbox top/bottom
+        renderW = elemRect.width;
+        renderH = elemRect.width / bitmapAR;
+        renderX = elemRect.left;
+        renderY = elemRect.top + (elemRect.height - renderH) / 2;
+    } else {
+        // Bitmap is taller than element — letterbox left/right
+        renderH = elemRect.height;
+        renderW = elemRect.height * bitmapAR;
+        renderX = elemRect.left + (elemRect.width - renderW) / 2;
+        renderY = elemRect.top;
+    }
+    return { x: renderX, y: renderY, width: renderW, height: renderH };
+}
+
+/**
  * Converts mouse event coordinates to canvas-local coordinates.
  * @param {MouseEvent} event - The mouse event.
  * @returns {{x: number, y: number}|null} The coordinates on the canvas, or null if outside the image.
  */
 export function getMousePosition(event) {
-    // Use the image element's bounding rect as the source of truth for display dimensions
-    const imageRect = imageEl.getBoundingClientRect();
     const clickX = event.clientX;
     const clickY = event.clientY;
 
-    // Check if the click is outside the visible bounds of the image
-    if (clickX < imageRect.left || clickX > imageRect.right ||
-        clickY < imageRect.top || clickY > imageRect.bottom) {
+    // Get the actual rendered area of the bitmap (accounts for object-fit: contain letterboxing)
+    const rendered = getRenderedBitmapRect();
+
+    // Check if the click is outside the visible image area
+    if (clickX < rendered.x || clickX > rendered.x + rendered.width ||
+        clickY < rendered.y || clickY > rendered.y + rendered.height) {
         return null;
     }
 
-    // Calculate click position as a ratio (0 to 1) of the image's displayed size
-    const xRatio = (clickX - imageRect.left) / imageRect.width;
-    const yRatio = (clickY - imageRect.top) / imageRect.height;
+    // Map from CSS pixel position to canvas bitmap coordinate
+    const xRatio = (clickX - rendered.x) / rendered.width;
+    const yRatio = (clickY - rendered.y) / rendered.height;
 
-    // Scale the ratio by the canvas's actual resolution (which matches the natural image size)
-    const canvasX = xRatio * canvasEl.width;
-    const canvasY = yRatio * canvasEl.height;
-
-    return { x: canvasX, y: canvasY };
+    return {
+        x: xRatio * canvasEl.width,
+        y: yRatio * canvasEl.height
+    };
 }
 
 /**

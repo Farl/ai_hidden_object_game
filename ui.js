@@ -21,6 +21,7 @@ export function reset() {
     elements.gameStatusContainer.innerHTML = '<p>First, upload or generate an image, then click "Start New Game" to begin!</p>';
     setButtonState(elements.giveUpButton, null, true);
     elements.giveUpButton.style.display = 'none';
+    elements.newImageButton.style.display = 'none';
     
     setButtonState(elements.fileInput, null, false);
     setButtonState(elements.generateImageButton, 'Generate Image', false);
@@ -100,6 +101,7 @@ export function startGameUI(gameObjects) {
     setButtonState(elements.startGameButton, 'Restart Game', false);
     elements.giveUpButton.style.display = 'block';
     setButtonState(elements.giveUpButton, 'Give Up', false);
+    elements.newImageButton.style.display = 'block';
 }
 
 /**
@@ -158,4 +160,21 @@ function setButtonState(button, text, disabled) {
 /** Enables the start game button. */
 export function enableStartButton() {
      setButtonState(elements.startGameButton, 'Start New Game', false);
+}
+
+/**
+ * Populates a <select> element with model options.
+ * @param {HTMLSelectElement} selectEl
+ * @param {Array<{value: string, label: string}>} models
+ * @param {string} defaultValue
+ */
+export function populateModelSelect(selectEl, models, defaultValue) {
+    selectEl.innerHTML = '';
+    models.forEach(({ value, label }) => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = label;
+        if (value === defaultValue) opt.selected = true;
+        selectEl.appendChild(opt);
+    });
 }

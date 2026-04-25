@@ -4,16 +4,41 @@ import * as canvas from './canvas.js';
 import * as game from './game.js';
 import * as ui from './ui.js';
 
+// Image generation models available on image.pollinations.ai
+const IMAGE_MODELS = [
+    { value: 'flux',           label: 'Flux (default)' },
+    { value: 'flux-realism',   label: 'Flux Realism' },
+    { value: 'flux-anime',     label: 'Flux Anime' },
+    { value: 'flux-3d',        label: 'Flux 3D' },
+    { value: 'turbo',          label: 'Turbo (fast)' },
+    { value: 'sana',           label: 'Sana' },
+];
+
+// Vision-capable analysis models available on gen.pollinations.ai
+const ANALYSIS_MODELS = [
+    { value: 'openai',         label: 'OpenAI GPT-4o' },
+    { value: 'openai-large',   label: 'OpenAI GPT-4o Large' },
+    { value: 'gemini',         label: 'Gemini' },
+    { value: 'gemini-fast',    label: 'Gemini Flash' },
+    { value: 'gemini-large',   label: 'Gemini Large' },
+    { value: 'claude',         label: 'Claude' },
+    { value: 'claude-large',   label: 'Claude Large' },
+    { value: 'qwen-vision',    label: 'Qwen Vision' },
+];
+
 document.addEventListener('DOMContentLoaded', () => {
     // --- DOM Element Selection ---
     const fileInput = document.getElementById('fileInput');
     const genPromptInput = document.getElementById('genPromptInput');
     const generateImageButton = document.getElementById('generateImageButton');
+    const imageModelSelect = document.getElementById('imageModelSelect');
+    const analysisModelSelect = document.getElementById('analysisModelSelect');
     const imageContainer = document.getElementById('imageContainer');
     const imagePreview = document.getElementById('imagePreview');
     const boundingBoxCanvas = document.getElementById('boundingBoxCanvas');
     const startGameButton = document.getElementById('startGameButton');
     const giveUpButton = document.getElementById('giveUpButton');
+    const newImageButton = document.getElementById('newImageButton');
     const objectListContainer = document.getElementById('objectListContainer');
     const gameStatusContainer = document.getElementById('gameStatus');
 
@@ -24,11 +49,30 @@ document.addEventListener('DOMContentLoaded', () => {
         generateImageButton,
         startGameButton,
         giveUpButton,
+        newImageButton,
         imageContainer,
         imagePreview,
         objectListContainer,
         gameStatusContainer
     });
+
+    // Populate model dropdowns
+    const defaultImageModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_IMAGE_MODEL || 'flux';
+    const defaultAnalysisModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_TEXT_MODEL || 'openai';
+    ui.populateModelSelect(imageModelSelect, IMAGE_MODELS, defaultImageModel);
+    ui.populateModelSelect(analysisModelSelect, ANALYSIS_MODELS, defaultAnalysisModel);
+
+    // Sync model selections into runtime config
+    function applyModelSelections() {
+        window.AI_HIDDEN_OBJECT_CONFIG = {
+            ...(window.AI_HIDDEN_OBJECT_CONFIG || {}),
+            POLLINATIONS_IMAGE_MODEL: imageModelSelect.value,
+            POLLINATIONS_TEXT_MODEL: analysisModelSelect.value,
+        };
+    }
+    applyModelSelections();
+    imageModelSelect.addEventListener('change', applyModelSelections);
+    analysisModelSelect.addEventListener('change', applyModelSelections);
 
     function refreshReadyState() {
         const configError = api.getAnalysisConfigurationError();
@@ -93,6 +137,13 @@ document.addEventListener('DOMContentLoaded', () => {
         game.giveUp();
         canvas.redraw(game.getObjects());
         ui.showGiveUpState();
+    });
+
+    // Handle going back to the setup screen
+    newImageButton.addEventListener('click', () => {
+        game.reset();
+        canvas.clear();
+        ui.reset();
     });
 
     // Handle starting or restarting the game
