@@ -298,6 +298,7 @@ export function getAnalysisConfigurationError() {
 // ---------------------------------------------------------------------------
 
 const POLLINATIONS_MODELS_ENDPOINT = 'https://gen.pollinations.ai/v1/models';
+const POLLINATIONS_IMAGE_MODELS_ENDPOINT = 'https://gen.pollinations.ai/image/models';
 const POLLINATIONS_TEXT_MODELS_ENDPOINT = 'https://gen.pollinations.ai/text/models';
 
 // Conservative fallback used only when discovery endpoints fail.
@@ -319,8 +320,61 @@ const FALLBACK_ANALYSIS_MODELS = [
 const IMAGE_MODEL_PREFERENCE = ['flux', 'kontext', 'gptimage', 'gpt-image-2', 'qwen-image'];
 const ANALYSIS_MODEL_PREFERENCE = ['openai', 'openai-fast', 'openai-large', 'mistral', 'qwen-vision'];
 
-function byPreference(ids) {
+function parseCostNumber(value) {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+    }
+
+    if (typeof value === 'string') {
+        const parsed = Number.parseFloat(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    return null;
+}
+
+function getModelCostInfo(pricing) {
+    if (!pricing || typeof pricing !== 'object') {
+        return { score: Number.POSITIVE_INFINITY, label: 'cost: n/a' };
+    }
+
+    const promptCost = parseCostNumber(pricing.promptTextTokens);
+    const completionCost = parseCostNumber(pricing.completionTextTokens);
+    const currency = typeof pricing.currency === 'string' ? pricing.currency : 'pollen';
+
+    if (promptCost !== null && completionCost !== null) {
+        const score = promptCost + completionCost;
+        return {
+            score,
+            label: `${score.toExponential(2)} pollen/token`
+        };
+    }
+
+    const numericCosts = Object.entries(pricing)
+        .filter(([key]) => key !== 'currency')
+        .map(([, value]) => parseCostNumber(value))
+        .filter(value => value !== null);
+
+    if (numericCosts.length === 0) {
+        return { score: Number.POSITIVE_INFINITY, label: 'cost: n/a' };
+    }
+
+    const score = Math.min(...numericCosts);
+    return {
+        score,
+        label: `${score.toExponential(2)} pollen/unit`
+    };
+}
+
+function byCostThenPreference(ids) {
     return (a, b) => {
+        const aCost = Number.isFinite(a.costScore) ? a.costScore : Number.POSITIVE_INFINITY;
+        const bCost = Number.isFinite(b.costScore) ? b.costScore : Number.POSITIVE_INFINITY;
+
+        if (aCost !== bCost) {
+            return aCost - bCost;
+        }
+
         const ai = ids.indexOf(a.value);
         const bi = ids.indexOf(b.value);
 
@@ -363,19 +417,55 @@ async function fetchUnifiedModelCatalog() {
  */
 export async function fetchImageModels() {
     try {
-        const catalog = await fetchUnifiedModelCatalog();
-        const models = catalog
-            .filter(m => (m.output_modalities || []).includes('image'))
-            .filter(m => {
-                const endpoints = m.supported_endpoints || [];
-                return endpoints.includes('/image/{prompt}') || endpoints.includes('/v1/images/generations');
-            })
-            .map(m => ({ value: m.id, label: m.id }));
+        const res = await fetch(POLLINATIONS_IMAGE_MODELS_ENDPOINT);
+        if (!res.ok) {
+            throw new Error(`Image model fetch failed: ${res.status}`);
+        }
 
-        const deduped = dedupeModels(models).sort(byPreference(IMAGE_MODEL_PREFERENCE));
-        return deduped.length > 0 ? deduped : FALLBACK_IMAGE_MODELS;
+        const catalog = await res.json();
+        if (!Array.isArray(catalog)) {
+            throw new Error('Unexpected image model response.');
+        }
+
+        const models = catalog
+            // Exclude paid-only models
+            .filter(m => m.paid_only !== true)
+            // Exclude video models (no image output)
+            .filter(m => {
+                const out = m.output_modalities || [];
+                return out.includes('image') && !out.includes('video');
+            })
+            .map(m => {
+                const pricing = m.pricing || {};
+                const completionCost = parseCostNumber(pricing.completionImageTokens);
+                const description = typeof m.description === 'string' ? m.description : m.name;
+                const costLabel = completionCost !== null
+                    ? `${completionCost.toExponential(2)} pollen/img`
+                    : 'n/a';
+                return {
+                    value: m.name,
+                    label: `${description} (${costLabel})`,
+                    costScore: completionCost !== null ? completionCost : Number.POSITIVE_INFINITY
+                };
+            });
+
+        const deduped = dedupeModels(models)
+            .sort(byCostThenPreference(IMAGE_MODEL_PREFERENCE))
+            .map(({ value, label }) => ({ value, label }));
+
+        if (deduped.length > 0) {
+            return deduped;
+        }
+
+        return FALLBACK_IMAGE_MODELS.map(m => ({
+            value: m.value,
+            label: `${m.value} (cost: n/a)`
+        }));
     } catch {
-        return FALLBACK_IMAGE_MODELS;
+        return FALLBACK_IMAGE_MODELS.map(m => ({
+            value: m.value,
+            label: `${m.value} (cost: n/a)`
+        }));
     }
 }
 
@@ -388,9 +478,20 @@ export async function fetchImageModels() {
 export async function fetchAnalysisModels() {
     try {
         const res = await fetch(POLLINATIONS_TEXT_MODELS_ENDPOINT);
-        if (!res.ok) return FALLBACK_ANALYSIS_MODELS;
+        if (!res.ok) {
+            return FALLBACK_ANALYSIS_MODELS.map(m => ({
+                value: m.value,
+                label: `${m.value} (cost: n/a)`
+            }));
+        }
+
         const models = await res.json();
-        if (!Array.isArray(models)) return FALLBACK_ANALYSIS_MODELS;
+        if (!Array.isArray(models)) {
+            return FALLBACK_ANALYSIS_MODELS.map(m => ({
+                value: m.value,
+                label: `${m.value} (cost: n/a)`
+            }));
+        }
 
         // Keep only chat-capable, vision-capable text models for image object detection.
         const visionModels = models
@@ -404,11 +505,31 @@ export async function fetchAnalysisModels() {
                 }
                 return endpoints.includes('/v1/chat/completions');
             })
-            .map(m => ({ value: m.name, label: m.name }));
+            .map(m => {
+                const cost = getModelCostInfo(m.pricing);
+                return {
+                    value: m.name,
+                    label: `${m.name} (${cost.label})`,
+                    costScore: cost.score
+                };
+            });
 
-        const deduped = dedupeModels(visionModels).sort(byPreference(ANALYSIS_MODEL_PREFERENCE));
-        return deduped.length > 0 ? deduped : FALLBACK_ANALYSIS_MODELS;
+        const deduped = dedupeModels(visionModels)
+            .sort(byCostThenPreference(ANALYSIS_MODEL_PREFERENCE))
+            .map(({ value, label }) => ({ value, label }));
+
+        if (deduped.length > 0) {
+            return deduped;
+        }
+
+        return FALLBACK_ANALYSIS_MODELS.map(m => ({
+            value: m.value,
+            label: `${m.value} (cost: n/a)`
+        }));
     } catch {
-        return FALLBACK_ANALYSIS_MODELS;
+        return FALLBACK_ANALYSIS_MODELS.map(m => ({
+            value: m.value,
+            label: `${m.value} (cost: n/a)`
+        }));
     }
 }

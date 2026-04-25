@@ -34,28 +34,65 @@ document.addEventListener('DOMContentLoaded', () => {
         gameStatusContainer
     });
 
-    // Sync model selections into runtime config whenever they change
+    const STORAGE_KEYS = {
+        imageModel: 'ai_hidden_object_image_model',
+        analysisModel: 'ai_hidden_object_analysis_model'
+    };
+
+    function getSavedModel(key) {
+        try {
+            return window.localStorage.getItem(key) || '';
+        } catch {
+            return '';
+        }
+    }
+
+    function saveModel(key, value) {
+        try {
+            window.localStorage.setItem(key, value);
+        } catch {
+            // Ignore storage errors (private mode, quota exceeded, etc.)
+        }
+    }
+
     function applyModelSelections() {
         window.AI_HIDDEN_OBJECT_CONFIG = {
             ...(window.AI_HIDDEN_OBJECT_CONFIG || {}),
             POLLINATIONS_IMAGE_MODEL: imageModelSelect.value,
             POLLINATIONS_TEXT_MODEL: analysisModelSelect.value,
         };
+
+        saveModel(STORAGE_KEYS.imageModel, imageModelSelect.value);
+        saveModel(STORAGE_KEYS.analysisModel, analysisModelSelect.value);
     }
+
+    function resolveSelectedModel(models, preferredValue) {
+        if (models.some(model => model.value === preferredValue)) {
+            return preferredValue;
+        }
+        return models[0]?.value || preferredValue;
+    }
+
     imageModelSelect.addEventListener('change', applyModelSelections);
     analysisModelSelect.addEventListener('change', applyModelSelections);
 
     // Show placeholder while models load, then fetch live lists from the API
-    const defaultImageModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_IMAGE_MODEL || 'flux';
-    const defaultAnalysisModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_TEXT_MODEL || 'openai';
+    const configImageModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_IMAGE_MODEL || 'flux';
+    const configAnalysisModel = (window.AI_HIDDEN_OBJECT_CONFIG || {}).POLLINATIONS_TEXT_MODEL || 'openai';
+    const defaultImageModel = getSavedModel(STORAGE_KEYS.imageModel) || configImageModel;
+    const defaultAnalysisModel = getSavedModel(STORAGE_KEYS.analysisModel) || configAnalysisModel;
+
     ui.populateModelSelect(imageModelSelect, [{ value: defaultImageModel, label: 'Loading...' }], defaultImageModel);
     ui.populateModelSelect(analysisModelSelect, [{ value: defaultAnalysisModel, label: 'Loading...' }], defaultAnalysisModel);
     applyModelSelections();
 
     Promise.all([api.fetchImageModels(), api.fetchAnalysisModels()])
         .then(([imgModels, analysisModels]) => {
-            ui.populateModelSelect(imageModelSelect, imgModels, defaultImageModel);
-            ui.populateModelSelect(analysisModelSelect, analysisModels, defaultAnalysisModel);
+            const selectedImageModel = resolveSelectedModel(imgModels, defaultImageModel);
+            const selectedAnalysisModel = resolveSelectedModel(analysisModels, defaultAnalysisModel);
+
+            ui.populateModelSelect(imageModelSelect, imgModels, selectedImageModel);
+            ui.populateModelSelect(analysisModelSelect, analysisModels, selectedAnalysisModel);
             applyModelSelections();
         })
         .catch(() => { /* keep placeholder selection on fetch failure */ });
