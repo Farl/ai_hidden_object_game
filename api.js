@@ -136,10 +136,6 @@ async function generateImageWithPollinations(prompt, config) {
     const imageUrl = new URL(`${baseUrl}/${encodeURIComponent(prompt)}`);
     imageUrl.searchParams.set('model', config.POLLINATIONS_IMAGE_MODEL);
 
-    if (config.POLLINATIONS_API_KEY) {
-        imageUrl.searchParams.set('key', config.POLLINATIONS_API_KEY);
-    }
-
     return imageUrl.toString();
 }
 
